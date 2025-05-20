@@ -7,7 +7,7 @@ const POINT_SIZE = 0.03;
 const POINT_COLOR = 0xff0000; // Red
 const DATA_URL = 'https://speed.cloudflare.com/locations';
 // A simple world map texture (replace with a higher quality one if desired)
-const TEXTURE_URL = 'https://eoimages.gsfc.nasa.gov/images/imagerecords/73000/73909/world.topo.bathy.200412.3x5400x2700.jpg'; // Example Texture
+const TEXTURE_URL = 'world.topo.bathy.200412.3x5400x2700.jpg'; // Example Texture
 
 // --- Scene Setup ---
 let scene, camera, renderer, globe, controls;
