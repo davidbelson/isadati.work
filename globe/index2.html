@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloudflare Network Globe</title>
+    <style>
+        body { margin: 0; font-family: Arial, sans-serif; background-color: #000; color: #fff; }
+        #globeViz { width: 100vw; height: 100vh; }
+        .tooltip {
+            position: absolute;
+            background-color: rgba(0, 0, 0, 0.75);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 14px;
+            pointer-events: none; /* So it doesn't interfere with globe clicks */
+            display: none; /* Hidden by default */
+            z-index: 100;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.5em;
+            color: #ccc;
+        }
+    </style>
+    <script src="https://unpkg.com/three@0.164.1/build/three.min.js"></script>
+    <script src="https://unpkg.com/three-globe@2.31.0/dist/three-globe.min.js"></script>
+    <script src="https://unpkg.com/three@0.164.1/examples/jsm/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <div id="globeViz"></div>
+    <div id="loading">Loading data and globe...</div>
+    <div id="tooltip" class="tooltip"></div>
+
+    <script>
+        const globeContainer = document.getElementById('globeViz');
+        const tooltipElement = document.getElementById('tooltip');
+        const loadingElement = document.getElementById('loading');
+        const cloudflareLogoUrl = 'https://upload.wikimedia.org/wikipedia/commons/4/4c/Cloudflare_logo.svg'; // Using a public SVG
+
+        // Scene, Camera, Renderer
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 300; // Adjusted for better initial view
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        globeContainer.appendChild(renderer.domElement);
+
+        // Globe instance
+        const globe = new Globe()
+            .globeImageUrl('//unpkg.com/three-globe/example/img/earth-dark.jpg') // Darker earth texture
+            .bumpImageUrl('//unpkg.com/three-globe/example/img/earth-topology.png')
+            .atmosphereColor('rgba(255,255,255,0.2)')
+            .atmosphereAltitude(0.25);
+
+        scene.add(globe);
+        scene.add(new THREE.AmbientLight(0xbbbbbb, Math.PI)); // Softer ambient light
+        scene.add(new THREE.DirectionalLight(0xffffff, 0.8 * Math.PI)); // Main light
+
+        // Orbit Controls
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.minDistance = 150; // Zoom limits
+        controls.maxDistance = 500;
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 0.5; // Slower rotation
+
+        // Window Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Fetch and plot data
+        fetch('https://speed.cloudflare.com/locations')
+            .then(res => {
+                if (!res.ok) {
+                    throw new Error(`HTTP error! status: ${res.status}`);
+                }
+                return res.json();
+            })
+            .then(locations => {
+                loadingElement.style.display = 'none'; // Hide loading message
+
+                const gData = locations.map(loc => ({
+                    lat: loc.lat,
+                    lng: loc.lon, // Note: library uses lng, JSON has lon
+                    city: loc.city,
+                    size: 0.5, // Base size for the points
+                    img: cloudflareLogoUrl
+                }));
+
+                globe.customLayerData(gData)
+                    .customThreeObject(d => {
+                        const loader = new THREE.TextureLoader();
+                        const texture = loader.load(d.img);
+                        texture.colorSpace = THREE.SRGBColorSpace; // Important for correct color display of SVGs/PNGs
+
+                        const material = new THREE.SpriteMaterial({ map: texture, alphaTest: 0.5, transparent: true });
+                        const sprite = new THREE.Sprite(material);
+                        const spriteSize = 6; // Adjust size of the logo on the globe
+                        sprite.scale.set(spriteSize, spriteSize * (texture.image ? texture.image.height / texture.image.width : 1), 1); // Adjust for aspect ratio if possible
+                        sprite.userData = { city: d.city }; // Store city for click event
+                        return sprite;
+                    })
+                    .customThreeObjectUpdate((obj, d) => {
+                        Object.assign(obj.position, globe.getCoords(d.lat, d.lng, 0.1)); // 0.1 is slight altitude offset
+                    })
+                    .onCustomLayerClick((obj, event) => {
+                        if (obj && obj.userData && obj.userData.city) {
+                            tooltipElement.textContent = obj.userData.city;
+                            tooltipElement.style.display = 'block';
+                            // Position tooltip near the mouse, slightly offset
+                            tooltipElement.style.left = `${event.clientX + 10}px`;
+                            tooltipElement.style.top = `${event.clientY - 20}px`; // Display above cursor
+                        }
+                    })
+                    .onCustomLayerHover((obj, prevObj) => {
+                        // Optional: highlight on hover
+                        if (obj) {
+                            document.body.style.cursor = 'pointer';
+                            if (obj.userData && obj.userData.city) {
+                                tooltipElement.textContent = obj.userData.city;
+                                tooltipElement.style.display = 'block';
+                            }
+                        } else {
+                            document.body.style.cursor = 'default';
+                            tooltipElement.style.display = 'none';
+                        }
+                    });
+
+                // Globe interaction to hide tooltip
+                globeContainer.addEventListener('mousedown', () => {
+                    tooltipElement.style.display = 'none';
+                });
+                globeContainer.addEventListener('wheel', () => { // Also hide on zoom
+                    tooltipElement.style.display = 'none';
+                });
+
+
+            })
+            .catch(error => {
+                console.error("Error fetching or processing Cloudflare locations:", error);
+                loadingElement.textContent = `Error loading data: ${error.message}. Please check the console.`;
+                loadingElement.style.color = 'red';
+            });
+
+
+        // Tooltip follow mouse on hover (if still visible after a click or hover)
+        document.addEventListener('mousemove', (event) => {
+            if (tooltipElement.style.display === 'block') {
+                tooltipElement.style.left = `${event.clientX + 10}px`;
+                tooltipElement.style.top = `${event.clientY - 20}px`;
+            }
+        });
+
+        // Animation loop
+        function animate() {
+            controls.update(); // For damping and auto-rotate
+            renderer.render(scene, camera);
+            requestAnimationFrame(animate);
+        }
+        animate();
+
+    </script>
+</body>
+</html>
